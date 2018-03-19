@@ -65,7 +65,7 @@ def impacket_compatibility(opts):
 	if opts.domain is None:
 		opts.domain = ''
 
-	if not opts.password and opts.username:
+	if not opts.password and opts.username and not opts.no_pass:
 		from getpass import getpass
 		opts.password = getpass("Password:")
 
@@ -127,18 +127,17 @@ class SAMRGroupDump:
 
 		try:
 			resp = dce.request(request)
-		except Exception, e:
-			if 'STATUS_NO_SUCH_DOMAIN' in str(e):
+		except samr.DCERPCSessionError:
 				raise
 
 		request = samr.SamrGetMembersInGroup()
 		request['GroupHandle'] = resp['GroupHandle']
 		resp = dce.request(request)
-		domain_computers = resp.fields['Members'].fields['Data'].fields['Members'].fields['Data'].fields['Data']
+		rids = resp.fields['Members'].fields['Data'].fields['Members'].fields['Data'].fields['Data']
 
 		mutex = Lock()
-		for host in domain_computers:
-			resp = samr.hSamrOpenUser(dce, domainHandle, samr.MAXIMUM_ALLOWED, host.fields['Data'])
+		for rid in rids:
+			resp = samr.hSamrOpenUser(dce, domainHandle, samr.MAXIMUM_ALLOWED, rid.fields['Data'])
 			rid_data = samr.hSamrQueryInformationUser2(dce, resp['UserHandle'], samr.USER_INFORMATION_CLASS.UserAllInformation)
 			rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '')
 			samr.hSamrCloseHandle(dce, resp['UserHandle'])
@@ -170,6 +169,7 @@ if __name__ == '__main__':
 	parser.add_argument('-o', dest='output', help='Output filename')
 	parser.add_argument('-r', dest='rid', type=int, required=True, help='Enumerate the specified rid')
 	parser.add_argument('-d', dest='dns_lookup', default=False, action='store_true', help='Perform DNS lookup')
+	parser.add_argument('-n', '--no-pass', dest='no_pass', action="store_true", help='don\'t ask for password')
 
 	options = parser.parse_args()
 	impacket_compatibility(options)
