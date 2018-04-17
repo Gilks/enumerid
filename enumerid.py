@@ -137,8 +137,14 @@ class SAMRGroupDump:
 
 		mutex = Lock()
 		for rid in rids:
-			resp = samr.hSamrOpenUser(dce, domainHandle, samr.MAXIMUM_ALLOWED, rid.fields['Data'])
-			rid_data = samr.hSamrQueryInformationUser2(dce, resp['UserHandle'], samr.USER_INFORMATION_CLASS.UserAllInformation)
+			try:
+				resp = samr.hSamrOpenUser(dce, domainHandle, samr.MAXIMUM_ALLOWED, rid.fields['Data'])
+				rid_data = samr.hSamrQueryInformationUser2(dce, resp['UserHandle'], samr.USER_INFORMATION_CLASS.UserAllInformation)
+			except samr.DCERPCSessionError as e:
+				# Occasionally an ACCESS_DENIED is rasied even though the user has permissions?
+				# Other times a STATUS_NO_SUCH_USER is raised when a rid apparently doesn't exist, even though it reported back as existing.
+				self.log.debug(e)
+				continue
 			rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '')
 			samr.hSamrCloseHandle(dce, resp['UserHandle'])
 
