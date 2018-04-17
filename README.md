@@ -3,7 +3,7 @@ I created enumerid to help determine valid ranges in an environment after gettin
 
 Rather than limiting the user to a single RID I decided to make it a bit more open ended and allow the user to specify arbitrary RIDs with the option to perform DNS resolution. So this script ended up being a more evolved version of enum4linux. The benefit of enumerid is that you can theoretically compile it into an exe and run it on Windows, although I have not personally tested this.
 
-If no password is specified, you will be prompted for one. This script requires credentials. Commonly used RIDs can be displayed with the -h option.
+Commonly used RIDs can be displayed with the -h option.
 
 ## Output
 ![enumerid example](example/enumerid_example.png "enumerid example")
