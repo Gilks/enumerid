@@ -71,12 +71,13 @@ def impacket_compatibility(opts):
 
 
 class SAMRGroupDump:
-	def __init__(self, username, password, domain, target, rid, dns_lookup, output):
+	def __init__(self, username, password, domain, target, rid, fqdn, dns_lookup, output):
 		self.username = username
 		self.password = password
 		self.domain = domain
 		self.port = 445
 		self.target = target
+		self.fqdn = fqdn
 		self.rid = rid
 		self.dns_lookup = dns_lookup
 		self.log = logging.getLogger('')
@@ -90,7 +91,7 @@ class SAMRGroupDump:
 
 	@classmethod
 	def from_args(cls, args):
-		return cls(args.username, args.password, args.domain, args.target, args.rid, args.dns_lookup, args.output)
+		return cls(args.username, args.password, args.domain, args.target, args.rid, args.fqdn, args.dns_lookup, args.output)
 
 	def dump(self):
 		self.log.info('[*] Retrieving endpoint list from {0}'.format(self.target))
@@ -145,7 +146,10 @@ class SAMRGroupDump:
 				# Other times a STATUS_NO_SUCH_USER is raised when a rid apparently doesn't exist, even though it reported back as existing.
 				self.log.debug(e)
 				continue
-			rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '')
+			if self.fqdn:
+				rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '') + '.' + self.fqdn
+			else:
+				rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '')
 			samr.hSamrCloseHandle(dce, resp['UserHandle'])
 
 			if self.dns_lookup:
@@ -174,6 +178,7 @@ if __name__ == '__main__':
 	parser.add_argument('target', action='store', help='[[domain/]username[:password]@]<DC IP>')
 	parser.add_argument('-o', dest='output', help='Output filename')
 	parser.add_argument('-r', dest='rid', type=int, required=True, help='Enumerate the specified rid')
+	parser.add_argument('-f', dest='fqdn',action='store', required=False, help='Provide the fully qualified domain')
 	parser.add_argument('-d', dest='dns_lookup', default=False, action='store_true', help='Perform DNS lookup')
 	parser.add_argument('-n', '--no-pass', dest='no_pass', action="store_true", help='don\'t ask for password')
 
