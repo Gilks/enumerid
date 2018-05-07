@@ -201,4 +201,7 @@ if __name__ == '__main__':
 
 		output_file = open(options.output, 'a+')
 		for data in dumper.data:
-			output_file.write(str(data) + '\n')
+			try:
+				output_file.write(str(data) + '\n')
+			except UnicodeEncodeError:
+				continue
