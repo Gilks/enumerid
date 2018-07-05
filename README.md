@@ -8,9 +8,6 @@ Commonly used RIDs can be displayed with the -h option.
 ## Details
 You can find the associated blog for this tool [here](https://gilks.github.io/post/enumerid/).
 
-## More Details
-More details can be found 
-
 ## Output
 ![enumerid example](example/enumerid_example.png "enumerid example")
 
