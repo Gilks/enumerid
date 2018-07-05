@@ -5,6 +5,12 @@ Rather than limiting the user to a single RID I decided to make it a bit more op
 
 Commonly used RIDs can be displayed with the -h option.
 
+## Details
+You can find the associated blog for this tool [here](https://gilks.github.io/post/enumerid/).
+
+## More Details
+More details can be found 
+
 ## Output
 ![enumerid example](example/enumerid_example.png "enumerid example")
 
@@ -31,4 +37,8 @@ Enumerate domain controllers without DNS resolution:
 Enumerate domain admins:
 ```
 ./enumerid.py domain/username:password@<DC IP> -r 512
+```
+Anonymous login vulnerability? Try this:
+```
+./enumerid.py domain/'':''@<DC IP> -r 515 -d
 ```
