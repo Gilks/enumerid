@@ -31,7 +31,7 @@ import os
 import re
 import socket
 import sys
-from threading import Thread, Lock
+from threading import Thread, BoundedSemaphore, Lock
 
 try:
 	from impacket.dcerpc.v5 import transport, samr
@@ -71,7 +71,7 @@ def impacket_compatibility(opts):
 
 
 class SAMRGroupDump:
-	def __init__(self, username, password, domain, target, rid, fqdn, dns_lookup, output):
+	def __init__(self, username, password, domain, target, rid, fqdn, dns_lookup, output, threads):
 		self.username = username
 		self.password = password
 		self.domain = domain
@@ -83,6 +83,7 @@ class SAMRGroupDump:
 		self.log = logging.getLogger('')
 		self.output_file = ""
 		self.data = []
+		self.sem = BoundedSemaphore(threads)
 
 		if output:
 			if not (output).endswith(".txt"):
@@ -91,7 +92,7 @@ class SAMRGroupDump:
 
 	@classmethod
 	def from_args(cls, args):
-		return cls(args.username, args.password, args.domain, args.target, args.rid, args.fqdn, args.dns_lookup, args.output)
+		return cls(args.username, args.password, args.domain, args.target, args.rid, args.fqdn, args.dns_lookup, args.output, args.threads)
 
 	def dump(self):
 		self.log.info('[*] Retrieving endpoint list from {0}'.format(self.target))
@@ -138,11 +139,12 @@ class SAMRGroupDump:
 
 		mutex = Lock()
 		for rid in rids:
+			self.sem.acquire()
 			try:
 				resp = samr.hSamrOpenUser(dce, domainHandle, samr.MAXIMUM_ALLOWED, rid.fields['Data'])
 				rid_data = samr.hSamrQueryInformationUser2(dce, resp['UserHandle'], samr.USER_INFORMATION_CLASS.UserAllInformation)
 			except samr.DCERPCSessionError as e:
-				# Occasionally an ACCESS_DENIED is rasied even though the user has permissions?
+				# Occasionally an ACCESS_DENIED is raised even though the user has permissions?
 				# Other times a STATUS_NO_SUCH_USER is raised when a rid apparently doesn't exist, even though it reported back as existing.
 				self.log.debug(e)
 				continue
@@ -159,6 +161,7 @@ class SAMRGroupDump:
 			else:
 				self.log.info(rid_data)
 				self.data.append(rid_data)
+			self.sem.release()
 		dce.disconnect()
 
 	def get_ip(self, hostname, mutex):
@@ -178,7 +181,9 @@ if __name__ == '__main__':
 	parser.add_argument('target', action='store', help='[[domain/]username[:password]@]<DC IP>')
 	parser.add_argument('-o', dest='output', help='Output filename')
 	parser.add_argument('-r', dest='rid', type=int, required=True, help='Enumerate the specified rid')
+	parser.add_argument('-t', dest='threads', type=int, required=False, help='Maximum enumeration threads')
 	parser.add_argument('-f', dest='fqdn',action='store', required=False, help='Provide the fully qualified domain')
+
 	parser.add_argument('-d', dest='dns_lookup', default=False, action='store_true', help='Perform DNS lookup')
 	parser.add_argument('-n', '--no-pass', dest='no_pass', action="store_true", help='don\'t ask for password')
 
