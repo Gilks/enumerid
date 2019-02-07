@@ -44,7 +44,7 @@ except ImportError:
 HELP_EPILOG = """
 Enumerate the specified RID. If no password is entered, you will be prompted for one. Target IP must be the domain 
 controller. In order to resolve DNS, you must specify the -d option. If you would like to enumerate all domain group
-RIDs for your domain, use the -g option.
+RIDs for your domain, use the -g option. To obtain all RIDs for every user in the domain, use the -u argument.
 
 Common RIDs:
 
