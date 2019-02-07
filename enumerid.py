@@ -32,12 +32,13 @@ import re
 import socket
 import sys
 from threading import Thread, Lock
+from datetime import datetime
 
 try:
 	from impacket.dcerpc.v5 import transport, samr
 	from impacket import nt_errors
 except ImportError:
-	print("You must install impacket before continuing")
+	print('You must install impacket before continuing')
 	sys.exit(os.EX_SOFTWARE)
 
 HELP_EPILOG = """
@@ -68,7 +69,7 @@ def impacket_compatibility(opts):
 
 	if not opts.password and opts.username and not opts.no_pass:
 		from getpass import getpass
-		opts.password = getpass("Password:")
+		opts.password = getpass('Password:')
 
 
 class SAMRGroupDump:
@@ -82,18 +83,46 @@ class SAMRGroupDump:
 		self.rid = int(rid)
 		self.dns_lookup = dns_lookup
 		self.log = logging.getLogger('')
-		self.output_file = ""
+		self.output_file = ''
 		self.data = []
 		self.enumerate_groups = False
+		self.enumerate_users = False
 
 		if output:
-			if not (output).endswith(".txt"):
-				output += ".txt"
+			if not (output).endswith('.txt'):
+				output += '.txt'
 			self.output_file = output
 
 	@classmethod
 	def from_args(cls, args):
 		return cls(args.username, args.password, args.domain, args.target, args.rid, args.fqdn, args.dns_lookup, args.output)
+
+	@staticmethod
+	def get_unix_time(time):
+		time -= 116444736000000000
+		time /= 10000000
+		return time
+
+	def expiration_check(self, user, attribute_str):
+		attribute = (user[attribute_str]['HighPart'] << 32) + user[attribute_str]['LowPart']
+		if not attribute:
+			attribute = 'Never'
+		else:
+			try:
+				attribute = str(datetime.fromtimestamp(self.get_unix_time(attribute)))
+			except ValueError:
+				attribute = 'Never'
+
+		return attribute
+
+	@staticmethod
+	def attribute_bool(user, samr_user_hex):
+		if user['UserAccountControl'] & samr_user_hex:
+			attribute_active = 'No'
+		else:
+			attribute_active = 'Yes'
+
+		return attribute_active
 
 	def dump(self):
 		self.log.info('[*] Retrieving endpoint list from {0}'.format(self.target))
@@ -106,9 +135,9 @@ class SAMRGroupDump:
 		if hasattr(rpctransport, 'set_credentials'):
 			rpctransport.set_credentials(self.username, self.password, self.domain)
 
-		self.__initialize_dce(rpctransport)
+		self.initialize_dce(rpctransport)
 
-	def __enumerate_domain_groups(self, dce, domain_handle):
+	def enumerate_domain_groups(self, dce, domain_handle):
 		request = samr.SamrEnumerateGroupsInDomain()
 		request['DomainHandle'] = domain_handle
 		request['EnumerationContext'] = 0
@@ -121,17 +150,107 @@ class SAMRGroupDump:
 				if dce_exception.error_code == nt_errors.STATUS_MORE_ENTRIES:
 					resp = dce_exception.get_packet()
 					request['EnumerationContext'] = resp['EnumerationContext']
-					groups = resp['Buffer'].fields['Buffer'].fields['Data'].fields['Data']
+					groups = resp['Buffer']['Buffer']
 					for i, group in enumerate(groups):
-						rid = resp['Buffer'].fields['Buffer'].fields['Data'].fields['Data'][i].fields['RelativeId'].fields['Data']
-						group_name = (resp['Buffer'].fields['Buffer'].fields['Data'].fields['Data'][i].fields['Name'].fields['Data'].fields['Data'].fields['Data']).decode('utf-16').encode("utf8")
-						group_and_rid = ('{0}:{1}'.format(group_name, rid))
+						rid = resp['Buffer']['Buffer'][i]['RelativeId']
+						group_name = (resp['Buffer']['Buffer'][i]['Name']).encode('utf8')
+						group_and_rid = ('{0},{1}'.format(group_name, rid))
 						self.log.info(group_and_rid)
 						self.data.append(group_and_rid)
 					continue
 			break
 
-	def __enumerate_users_in_group(self, dce, domain_handle):
+	def enumerate_domain_users(self, dce, domain_handle):
+		request = samr.SamrQueryDisplayInformation()
+		request['DomainHandle'] = domain_handle
+		request['DisplayInformationClass'] = samr.DOMAIN_DISPLAY_INFORMATION.DomainDisplayUser
+		request['Index'] = 0
+		request['EntryCount'] = 0xffffffff
+		request['PreferredMaximumLength'] = 0xffffffff
+		count = 0
+
+		while True:
+			try:
+				resp = dce.request(request)
+			except Exception as dce_exception:
+				if dce_exception.error_code == nt_errors.STATUS_MORE_ENTRIES:
+					resp = dce_exception.get_packet()
+					count += resp['Buffer']['UserInformation']['EntriesRead']
+					request['Index'] = count
+					users = resp['Buffer']['UserInformation']['Buffer']
+					for i, user in enumerate(users):
+						try:
+							username = (user['AccountName']).encode('utf8')
+							full_name = (user['FullName']).encode('utf8')
+							admin_comment = (user['AdminComment']).encode('utf8')
+							rid = user['Rid']
+						except AttributeError:
+							pass
+
+						data = '{0},{1},{2},{3}'.format(rid, username, full_name, admin_comment)
+						self.log.info(data)
+						self.data.append(data)
+					continue
+			break
+
+	def enumerate_user_info(self, dce, domain_handle):
+		# Most of this method was built using logic from samrdump.py
+		user_request = samr.hSamrOpenUser(dce, domain_handle, samr.MAXIMUM_ALLOWED, self.rid)
+		self.log.info('[*] User RID detected. Enumerating information on user..\n')
+		info = samr.hSamrQueryInformationUser(dce, user_request['UserHandle'], samr.USER_INFORMATION_CLASS.UserAllInformation)
+		user = info['Buffer']['All']
+
+		pass_last_set = self.expiration_check(user, 'PasswordLastSet')
+		account_expires = self.expiration_check(user, 'AccountExpires')
+		pass_expires = self.expiration_check(user, 'PasswordMustChange')
+		pass_can_change = self.expiration_check(user, 'PasswordCanChange')
+		last_logon = self.expiration_check(user, 'LastLogon')
+		account_active = self.attribute_bool(user, samr.USER_ACCOUNT_DISABLED)
+		user_may_change_pass = self.attribute_bool(user, samr.USER_CHANGE_PASSWORD)
+		password_required = self.attribute_bool(user, samr.USER_PASSWORD_NOT_REQUIRED)
+
+		workstations_allowed = user['WorkStations']
+
+		if workstations_allowed == '':
+			workstations_allowed = 'All'
+
+		self.log.info('User name\t\t\t{0}'.format(user['UserName']))
+		self.log.info('User RID\t\t\t{0}'.format(user['UserId']))
+		self.log.info('Full Name\t\t\t{0}'.format(user['FullName']))
+		self.log.info('Comment\t\t\t\t{0}'.format(user['AdminComment']))
+		self.log.info("User's Comment\t\t\t\t{0}".format(user['UserComment']))
+		self.log.info('Country/region code\t\t{0}'.format(user['CountryCode']))
+		self.log.info('Account active\t\t\t{0}'.format(account_active))
+		self.log.info('Account expires\t\t\t{0}\n'.format(account_expires))
+
+		self.log.info('Password last set\t\t{0}'.format(pass_last_set))
+		self.log.info('Password expires\t\t{0}'.format(pass_expires))
+		self.log.info('Password changeable\t\t{0}'.format(pass_can_change))
+		self.log.info('Password required\t\t{0}'.format(password_required))
+		self.log.info('Bad Password Count\t\t{0}'.format(user['BadPasswordCount']))
+		self.log.info('User may change password\t{0}\n'.format(user_may_change_pass))
+
+		self.log.info('Workstations allowed\t\t{0}'.format(workstations_allowed))
+		self.log.info('Logon script\t\t\t\t{0}'.format(user['ScriptPath']))
+		self.log.info('User profile\t\t\t\t{0}'.format(user['ProfilePath']))
+		self.log.info('Home directory\t\t\t{0}'.format(user['HomeDirectory']))
+		self.log.info('Home directory drive\t\t{0}\n'.format(user['HomeDirectoryDrive']))
+
+		self.log.info('Group Memberships')
+		group_rids = samr.hSamrGetGroupsForUser(dce, user_request['UserHandle'])['Groups']['Groups']
+
+		for i, group_rid in enumerate(group_rids):
+			group_rid = group_rids[i]['RelativeId']
+			group_request = samr.hSamrOpenGroup(dce, domain_handle, samr.MAXIMUM_ALLOWED, group_rid)
+			group_info = samr.hSamrQueryInformationGroup(dce, group_request['GroupHandle'])
+			group_name = group_info['Buffer']['General']['Name']
+			group_comment = group_info['Buffer']['General']['AdminComment']
+			self.log.info('Name: {0}\nDesc: {1}\n'.format(group_name, group_comment))
+
+		samr.hSamrCloseHandle(dce, user_request['UserHandle'])
+		samr.hSamrCloseHandle(dce, group_request['GroupHandle'])
+
+	def enumerate_users_in_group(self, dce, domain_handle):
 		request = samr.SamrOpenGroup()
 		request['DomainHandle'] = domain_handle
 		request['DesiredAccess'] = samr.MAXIMUM_ALLOWED
@@ -145,9 +264,10 @@ class SAMRGroupDump:
 		request = samr.SamrGetMembersInGroup()
 		request['GroupHandle'] = resp['GroupHandle']
 		resp = dce.request(request)
+		self.log.info('[*] Group RID detected. Enumerating users in group..\n')
 
 		try:
-			rids = resp.fields['Members'].fields['Data'].fields['Members'].fields['Data'].fields['Data']
+			rids = resp['Members']['Members']
 		except AttributeError:
 			self.log.info('[-] No users in group')
 			return
@@ -155,7 +275,7 @@ class SAMRGroupDump:
 		mutex = Lock()
 		for rid in rids:
 			try:
-				resp = samr.hSamrOpenUser(dce, domain_handle, samr.MAXIMUM_ALLOWED, rid.fields['Data'])
+				resp = samr.hSamrOpenUser(dce, domain_handle, samr.MAXIMUM_ALLOWED, rid['Data'])
 				rid_data = samr.hSamrQueryInformationUser2(dce, resp['UserHandle'], samr.USER_INFORMATION_CLASS.UserAllInformation)
 			except samr.DCERPCSessionError as e:
 				# Occasionally an ACCESS_DENIED is rasied even though the user has permissions?
@@ -176,7 +296,7 @@ class SAMRGroupDump:
 				self.log.info(rid_data)
 				self.data.append(rid_data)
 
-	def __initialize_dce(self, rpctransport):
+	def initialize_dce(self, rpctransport):
 		dce = rpctransport.get_dce_rpc()
 		dce.connect()
 		dce.bind(samr.MSRPC_UUID_SAMR)
@@ -186,21 +306,40 @@ class SAMRGroupDump:
 		domains = resp['Buffer']['Buffer']
 
 		self.log.info('[+] Found domain: {0}'.format(domains[0]['Name']))
-		self.log.info("[*] Enumerating RID {0} in the {1} domain..\n".format(self.rid, domains[0]['Name']))
 		resp = samr.hSamrLookupDomainInSamServer(dce, server_handle, domains[0]['Name'])
 		resp = samr.hSamrOpenDomain(dce, serverHandle=server_handle, domainId=resp['DomainId'])
 		domain_handle = resp['DomainHandle']
 
 		if self.enumerate_groups:
-			self.__enumerate_domain_groups(dce, domain_handle)
+			self.log.info('[*] Enumerating all Domain Group RIDs (Group/RID)')
+			self.enumerate_domain_groups(dce, domain_handle)
+
+		elif self.enumerate_users:
+			self.log.info('[*] Enumerating all Domain Users (RID/Username/Name/Description)')
+			self.enumerate_domain_users(dce, domain_handle)
+
 		else:
-			self.__enumerate_users_in_group(dce, domain_handle)
+			self.log.info('[*] Enumerating RID {0} in the {1} domain..'.format(self.rid, domains[0]['Name']))
+			try:
+				self.enumerate_user_info(dce, domain_handle)
+				dce.disconnect()
+				return
+			except samr.DCERPCSessionError:
+				self.log.debug('[*] RID is not for a user. Trying again as a group.')
+				pass
+
+			try:
+				self.enumerate_users_in_group(dce, domain_handle)
+			except samr.DCERPCSessionError:
+				self.log.debug('[*] RID is not for a group either')
+				self.log.info('[-] RID not found')
+
 		dce.disconnect()
 
 	def get_ip(self, hostname, mutex):
 		try:
 			ip = socket.gethostbyname(hostname)
-			rid_info = '{0}:{1}'.format(hostname, ip)
+			rid_info = '{0},{1}'.format(hostname, ip)
 		except socket.error:
 			rid_info = hostname
 
@@ -214,25 +353,27 @@ if __name__ == '__main__':
 	parser.add_argument('-L', dest='loglvl', action='store', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='INFO', help='set the logging level')
 	parser.add_argument('target', action='store', help='[[domain/]username[:password]@]<DC IP>')
 	parser.add_argument('-o', dest='output', help='Output filename')
-	parser.add_argument('-r', dest='rid', help='Enumerate the specified rid')
+	parser.add_argument('-r', dest='rid', default=0, help='Enumerate the specified rid')
 	parser.add_argument('-f', dest='fqdn',action='store', required=False, help='Provide the fully qualified domain')
 	parser.add_argument('-d', dest='dns_lookup', default=False, action='store_true', help='Perform DNS lookup')
-	parser.add_argument('-n', '--no-pass', dest='no_pass', action="store_true", help='don\'t ask for password')
-	parser.add_argument('-g', dest='enum_groups', default=False, action="store_true", help='Enumerate all Domain Group RIDs')
+	parser.add_argument('-n', '--no-pass', dest='no_pass', action='store_true', help='don\'t ask for password')
+	parser.add_argument('-g', dest='enum_groups', default=False, action='store_true', help='Enumerate all Domain Group RIDs')
+	parser.add_argument('-u', dest='enum_users', default=False, action='store_true', help='Enumerate all Domain User RIDs, name and descriptions')
 
 	options = parser.parse_args()
 	impacket_compatibility(options)
-	logging.getLogger(logging.basicConfig(level=getattr(logging, options.loglvl), format=""))
+	logging.getLogger(logging.basicConfig(level=getattr(logging, options.loglvl), format=''))
 
-	if not options.rid and not options.enum_groups:
-		print("[-] You must specify a RID (-r) or enumerate all domain groups (-g)")
+	if options.rid == 0 and not options.enum_groups and not options.enum_users:
+		print('[-] You must specify a RID (-r) or enumerate all domain groups (-g) or enumerate all domain users (-u)')
 		sys.exit(os.EX_SOFTWARE)
 	try:
 		dumper = SAMRGroupDump.from_args(options)
 		dumper.enumerate_groups = options.enum_groups
+		dumper.enumerate_users = options.enum_users
 		dumper.dump()
 	except KeyboardInterrupt:
-		print("Exiting...")
+		print('Exiting...')
 
 	except Exception as e:
 		print(e)
