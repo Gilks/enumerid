@@ -39,3 +39,8 @@ Anonymous login vulnerability? Try this:
 ```
 ./enumerid.py domain/'':''@<DC IP> -r 515 -d
 ```
+
+Enumerate without the RID (replace with your user/group name):
+```
+./enumerid.py domain/username:password@<DC IP> -s "Domain Admins"
+```
