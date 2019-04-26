@@ -35,16 +35,25 @@ from threading import Thread, Lock
 from datetime import datetime
 
 try:
-	from impacket.dcerpc.v5 import transport, samr
+	from impacket.dcerpc.v5 import transport, samr, lsad, lsat
+	from impacket.dcerpc.v5.dtypes import MAXIMUM_ALLOWED
 	from impacket import nt_errors
 except ImportError:
 	print('You must install impacket before continuing')
 	sys.exit(os.EX_SOFTWARE)
 
 HELP_EPILOG = """
-Enumerate the specified RID. If no password is entered, you will be prompted for one. Target IP must be the domain 
+Enumerate the specified RID or string. If no password is entered you will be prompted for one (anonymous login is 
+possible by substituting two single quotes in the username and pass field). Target IP must be the domain 
 controller. In order to resolve DNS, you must specify the -d option. If you would like to enumerate all domain group
-RIDs for your domain, use the -g option. To obtain all RIDs for every user in the domain, use the -u argument.
+RIDs, use the -g option. To obtain all RIDs for every user in the domain (including descriptions), use the -u argument. 
+If you don't know the RID you can use the -s option and specify the string name of the group/user/host and the RID will
+be automatically discovered.
+
+Note: Using the -s option creates two seperate connections to the target. This is because two rpctransports are
+needed to resolve the RID from a string (lsar and samr). If you specify the RID the script will only perform a single 
+connection to the domain controller. This isn't really important for general use but red teams may appreciate 
+the insight.
 
 Common RIDs:
 
@@ -87,6 +96,7 @@ class SAMRGroupDump:
 		self.data = []
 		self.enumerate_groups = False
 		self.enumerate_users = False
+		self.log.info('[*] Connection target: {0}'.format(self.target))
 
 		if output:
 			if not (output).endswith('.txt'):
@@ -125,7 +135,6 @@ class SAMRGroupDump:
 		return attribute_active
 
 	def dump(self):
-		self.log.info('[*] Retrieving endpoint list from {0}'.format(self.target))
 		stringbinding = r'ncacn_np:{0}[\pipe\samr]'.format(self.target)
 		logging.debug('StringBinding {0}'.format(stringbinding))
 		rpctransport = transport.DCERPCTransportFactory(stringbinding)
@@ -264,7 +273,7 @@ class SAMRGroupDump:
 		request = samr.SamrGetMembersInGroup()
 		request['GroupHandle'] = resp['GroupHandle']
 		resp = dce.request(request)
-		self.log.info('[*] Group RID detected. Enumerating users in group..\n')
+		self.log.info('[*] Group RID detected. Enumerating users/hosts in group..\n')
 
 		try:
 			rids = resp['Members']['Members']
@@ -347,6 +356,27 @@ class SAMRGroupDump:
 			self.log.info(rid_info)
 			self.data.append(rid_info.encode('utf-8'))
 
+	def get_sid(self, name):
+		self.log.info('[*] Looking up SID for {0}..'.format(name))
+		stringbinding = r'ncacn_np:{0}[\pipe\lsarpc]'.format(self.target)
+		logging.debug('StringBinding {0}'.format(stringbinding))
+		rpctransport = transport.DCERPCTransportFactory(stringbinding)
+		rpctransport.set_dport(self.port)
+		rpctransport.setRemoteHost(self.target)
+
+		if hasattr(rpctransport, 'set_credentials'):
+			rpctransport.set_credentials(self.username, self.password, self.domain)
+
+		dce = rpctransport.get_dce_rpc()
+		dce.connect()
+		dce.bind(lsat.MSRPC_UUID_LSAT)
+		resp = lsad.hLsarOpenPolicy2(dce, MAXIMUM_ALLOWED | lsad.POLICY_LOOKUP_NAMES)
+		policyHandle = resp['PolicyHandle']
+		resp = lsat.hLsarLookupNames(dce, policyHandle, (name,))
+		self.rid = resp['TranslatedSids']['Sids'][0]['RelativeId']
+		dce.disconnect()
+		return
+
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(epilog=HELP_EPILOG, formatter_class=argparse.RawTextHelpFormatter)
@@ -359,18 +389,22 @@ if __name__ == '__main__':
 	parser.add_argument('-n', '--no-pass', dest='no_pass', action='store_true', help='don\'t ask for password')
 	parser.add_argument('-g', dest='enum_groups', default=False, action='store_true', help='Enumerate all Domain Group RIDs')
 	parser.add_argument('-u', dest='enum_users', default=False, action='store_true', help='Enumerate all Domain User RIDs, name and descriptions')
+	parser.add_argument('-s', dest='string_name', action='store', required=False, help='Lookup RID for the specified string and enumerate information')
 
 	options = parser.parse_args()
 	impacket_compatibility(options)
 	logging.getLogger(logging.basicConfig(level=getattr(logging, options.loglvl), format=''))
 
-	if options.rid == 0 and not options.enum_groups and not options.enum_users:
-		print('[-] You must specify a RID (-r) or enumerate all domain groups (-g) or enumerate all domain users (-u)')
+	if options.rid == 0 and not options.enum_groups and not options.enum_users and not options.string_name:
+		print('[-] You must specify a RID (-r) or enumerate all domain groups (-g) or enumerate all domain users (-u) or string name (-s)')
 		sys.exit(os.EX_SOFTWARE)
 	try:
 		dumper = SAMRGroupDump.from_args(options)
 		dumper.enumerate_groups = options.enum_groups
 		dumper.enumerate_users = options.enum_users
+
+		if options.string_name:
+			dumper.get_sid(options.string_name)
 		dumper.dump()
 	except KeyboardInterrupt:
 		print('Exiting...')
