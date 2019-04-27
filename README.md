@@ -3,13 +3,17 @@ I created enumerid to help determine valid ranges in an environment after gettin
 
 Rather than limiting the user to a single RID I decided to make it a bit more open ended and allow the user to specify arbitrary RIDs with the option to perform DNS resolution. So this script ended up being a more evolved version of enum4linux. The benefit of enumerid is that you can theoretically compile it into an exe and run it on Windows, although I have not personally tested this.
 
-Commonly used RIDs can be displayed with the -h option.
+Enumerid can also work as a linux version of the "net user /domain" command. See below for more details.
+
+Commonly used RIDs can be displayed with the -h option. If you don't know the RID you can use the -s option to specify the string name of the user or group.
 
 ## Details
 You can find the associated blog for this tool [here](https://gilks.github.io/post/enumerid/).
 
 ## Output
 ![enumerid example](example/enumerid_example.png "enumerid example")
+
+![enumerid net user example](example/enumerid_net_user_example.png "enumerid net user example")
 
 ## Requirements
 The impacket library is required in order to run this script.
