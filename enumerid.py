@@ -31,8 +31,9 @@ import os
 import re
 import socket
 import sys
-from threading import Thread, Lock
 from datetime import datetime
+from threading import Thread, Lock
+from time import strftime, gmtime
 
 try:
 	from impacket.dcerpc.v5 import transport, samr, lsad, lsat
@@ -96,10 +97,11 @@ class SAMRGroupDump:
 		self.data = []
 		self.enumerate_groups = False
 		self.enumerate_users = False
+		self.enumerate_pass_policy = False
 		self.log.info('[*] Connection target: {0}'.format(self.target))
 
 		if output:
-			if not (output).endswith('.txt'):
+			if not output.endswith('.txt'):
 				output += '.txt'
 			self.output_file = output
 
@@ -124,6 +126,50 @@ class SAMRGroupDump:
 				attribute = 'Never'
 
 		return attribute
+
+	@staticmethod
+	def convert_policy(low, high, lockout=False):
+		# This method is from polenum.py
+		time = ""
+		tmp = 0
+
+		if low == 0 and hex(high) == "-0x80000000":
+			return "Not Set"
+		if low == 0 and high == 0:
+			return "None"
+
+		if not lockout:
+			if (low != 0):
+				high = abs(high + 1)
+			else:
+				high = abs(high)
+				low = abs(low)
+
+			tmp = low + (high) * 16 ** 8  # convert to 64bit int
+			tmp *= (1e-7)  # convert to seconds
+		else:
+			tmp = abs(high) * (1e-7)
+
+		try:
+			minutes = int(strftime("%M", gmtime(tmp)))
+			hours = int(strftime("%H", gmtime(tmp)))
+			days = int(strftime("%j", gmtime(tmp))) - 1
+		except ValueError as e:
+			return "[-] Invalid TIME"
+
+		if days > 1:
+			time += "{0} days ".format(days)
+		elif days == 1:
+			time += "{0} day ".format(days)
+		if hours > 1:
+			time += "{0} hours ".format(hours)
+		elif hours == 1:
+			time += "{0} hour ".format(hours)
+		if minutes > 1:
+			time += "{0} minutes ".format(minutes)
+		elif minutes == 1:
+			time += "{0} minute ".format(minutes)
+		return time
 
 	@staticmethod
 	def attribute_bool(user, samr_user_hex):
@@ -305,6 +351,64 @@ class SAMRGroupDump:
 				self.log.info(rid_data)
 				self.data.append(rid_data)
 
+	def enumerate_password_policy(self, dce, domain_handle):
+		# This method is a refactored and cleaned up version of polenum.py. I had a hard time finding the true
+		# author of polenum.py to give credit.. Give me a shout if you're out there!
+		domain_passwd = samr.DOMAIN_INFORMATION_CLASS.DomainPasswordInformation
+		resp = samr.hSamrQueryInformationDomain2(dce, domainHandle=domain_handle, domainInformationClass=domain_passwd)
+		policy = resp['Buffer']['Password']
+		minimum_len = policy['MinPasswordLength'] or "None"
+		history = policy['PasswordHistoryLength'] or "None"
+		maximum_age = self.convert_policy(int(policy['MaxPasswordAge']['LowPart']), int(policy['MaxPasswordAge']['HighPart']))
+		minimum_pass_age = self.convert_policy(int(policy['MinPasswordAge']['LowPart']), int(policy['MinPasswordAge']['HighPart']))
+		password_props = policy['PasswordProperties']
+
+		complexity_binary = []
+		while password_props:
+			complexity_binary.append(password_props % 2)
+			password_props /= 2
+
+		com_binary = complexity_binary[::-1]
+		if len(com_binary) != 8:
+			for x in xrange(6 - len(com_binary)):
+				com_binary.insert(0, 0)
+		password_props = ''.join([str(value) for value in com_binary])
+
+		domain_lockout = samr.DOMAIN_INFORMATION_CLASS.DomainLockoutInformation
+		resp = samr.hSamrQueryInformationDomain2(dce, domainHandle=domain_handle, domainInformationClass=domain_lockout)
+		lockout = resp['Buffer']['Lockout']
+		lockout_observation = self.convert_policy(0, lockout['LockoutObservationWindow'], lockout=True)
+		lockout_duration = self.convert_policy(0, lockout['LockoutDuration'], lockout=True)
+		lockout_threshold = lockout['LockoutThreshold'] or "None"
+
+		domain_logoff = samr.DOMAIN_INFORMATION_CLASS.DomainLogoffInformation
+		resp = samr.hSamrQueryInformationDomain2(dce, domainHandle=domain_handle, domainInformationClass=domain_logoff)
+		logoff = resp['Buffer']['Logoff']['ForceLogoff']
+		logoff_time = self.convert_policy(logoff['LowPart'], logoff['HighPart'])
+
+		domain_complexity = {
+			5: 'Domain Password Complex:',
+			4: 'Domain Password No Anon Change:',
+			3: 'Domain Password No Clear Change:',
+			2: 'Domain Password Lockout Admins:',
+			1: 'Domain Password Store Cleartext:',
+			0: 'Domain Refuse Password Change:'
+		}
+
+		self.log.info("\n\t[+] Minimum password length: {0}".format(minimum_len))
+		self.log.info("\t[+] Password history length: {0}".format(history))
+		self.log.info("\t[+] Maximum password age: {0}".format(maximum_age))
+		self.log.info("\t[+] Password Complexity Flags: {0}\n".format(password_props or "None"))
+
+		for i, a in enumerate(password_props):
+			self.log.info("\t\t[+] {0} {1}".format(domain_complexity[i], str(a)))
+
+		self.log.info("\n\t[+] Minimum password age: {0}".format(minimum_pass_age))
+		self.log.info("\t[+] Reset Account Lockout Counter: {0}".format(lockout_observation))
+		self.log.info("\t[+] Locked Account Duration: {0}".format(lockout_duration))
+		self.log.info("\t[+] Account Lockout Threshold: {0}".format(lockout_threshold))
+		self.log.info("\t[+] Forced Log off Time: {0}\n".format(logoff_time))
+
 	def initialize_dce(self, rpctransport):
 		dce = rpctransport.get_dce_rpc()
 		dce.connect()
@@ -326,6 +430,10 @@ class SAMRGroupDump:
 		elif self.enumerate_users:
 			self.log.info('[*] Enumerating all Domain Users (RID/Username/Name/Description)')
 			self.enumerate_domain_users(dce, domain_handle)
+
+		elif self.enumerate_pass_policy:
+			self.log.info('[*] Enumerating domain password policy')
+			self.enumerate_password_policy(dce, domain_handle)
 
 		else:
 			self.log.info('[*] Enumerating RID {0} in the {1} domain..'.format(self.rid, domains[0]['Name']))
@@ -389,19 +497,21 @@ if __name__ == '__main__':
 	parser.add_argument('-n', '--no-pass', dest='no_pass', action='store_true', help='don\'t ask for password')
 	parser.add_argument('-g', dest='enum_groups', default=False, action='store_true', help='Enumerate all Domain Group RIDs')
 	parser.add_argument('-u', dest='enum_users', default=False, action='store_true', help='Enumerate all Domain User RIDs, name and descriptions')
+	parser.add_argument('-p', dest='enum_pass_policy', default=False, action='store_true', help='Enumerate domain password policy')
 	parser.add_argument('-s', dest='string_name', action='store', required=False, help='Lookup RID for the specified string and enumerate information')
 
 	options = parser.parse_args()
 	impacket_compatibility(options)
 	logging.getLogger(logging.basicConfig(level=getattr(logging, options.loglvl), format=''))
 
-	if options.rid == 0 and not options.enum_groups and not options.enum_users and not options.string_name:
-		print('[-] You must specify a RID (-r) or enumerate all domain groups (-g) or enumerate all domain users (-u) or string name (-s)')
+	if options.rid == 0 and not options.enum_groups and not options.enum_users and not options.string_name and not options.enum_pass_policy:
+		print('[-] You must specify a RID (-r) or enumerate all domain groups (-g) or enumerate all domain users (-u) or string name (-s) or enumerate password policy (-p)')
 		sys.exit(os.EX_SOFTWARE)
 	try:
 		dumper = SAMRGroupDump.from_args(options)
 		dumper.enumerate_groups = options.enum_groups
 		dumper.enumerate_users = options.enum_users
+		dumper.enumerate_pass_policy = options.enum_pass_policy
 
 		if options.string_name:
 			dumper.get_sid(options.string_name)
