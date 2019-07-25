@@ -18,7 +18,7 @@ Enumerate domain computers with `-r` and resolve leased IPs with `-d`
 ![enumerid net user example](example/enumerid_net_user_example.png "enumerid net user example")
 
 Domain password policy enumeration with `-p`
-![enumerid domain password policy example](example/eenumerid_domain_password_policy_example.png "enumerid password policy enumeration example")
+![enumerid domain password policy example](example/enumerid_domain_password_policy_example.png "enumerid password policy enumeration example")
 
 ## Requirements
 The impacket library is required in order to run this script.
