@@ -529,6 +529,8 @@ if __name__ == '__main__':
 		output_file = open(options.output, 'a+')
 		for data in dumper.data:
 			try:
+				if isinstance(data, bytes):
+					data = data.decode()
 				output_file.write(data + '\n')
 			except UnicodeEncodeError:
 				continue
