@@ -82,8 +82,8 @@ def impacket_compatibility(opts):
 		from getpass import getpass
 		opts.password = getpass('Password:')
 
-        if not opts.nameservers:
-            opts.nameservers = [opts.target]
+	if not opts.nameservers:
+		opts.nameservers = [opts.target]
 
 
 class SAMRGroupDump:
@@ -98,15 +98,15 @@ class SAMRGroupDump:
 		self.dns_lookup = dns_lookup
 		self.log = logging.getLogger('')
 		self.output_file = ''
-                self.nameservers = nameservers
+		self.nameservers = nameservers
 		self.data = []
 		self.enumerate_groups = False
 		self.enumerate_users = False
 		self.enumerate_pass_policy = False
 		self.log.info('[*] Connection target: {0}'.format(self.target))
-                
-                if not len(nameservers) and self.dns_lookup:
-                    self.nameservers = [target]
+
+		if not len(nameservers) and self.dns_lookup:
+			self.nameservers = [target]
 
 		if output:
 			if not output.endswith('.txt'):
@@ -462,14 +462,14 @@ class SAMRGroupDump:
 		dce.disconnect()
 
 	def get_ip(self, hostname, mutex):
-                res = resolver.Resolver()
-                res.nameservers = self.nameservers 
+		res = resolver.Resolver()
+		res.nameservers = self.nameservers 
 		try:
-                        answers = res.query(hostname)
-                        if len(answers):
-                            ip = answers[0].address
-                        else:
-                            ip = ''
+			answers = res.query(hostname)
+			if len(answers):
+				ip = answers[0].address
+			else:
+				ip = ''
 			rid_info = '{0},{1}'.format(hostname, ip)
 		except Exception:
 			rid_info = hostname
@@ -509,7 +509,7 @@ if __name__ == '__main__':
 	parser.add_argument('-f', dest='fqdn',action='store', required=False, help='Provide the fully qualified domain')
 	parser.add_argument('-d', dest='dns_lookup', default=False, action='store_true', help='Perform DNS lookup')
 	parser.add_argument('-n', '--no-pass', dest='no_pass', action='store_true', help='don\'t ask for password')
-        parser.add_argument('-ns', '--nameservers', dest='nameservers', nargs='+', default=[], help='Specify alternate nameserver for DNS resolution. Default: target-dc')
+	parser.add_argument('-ns', '--nameservers', dest='nameservers', nargs='+', default=[], help='Specify alternate nameserver for DNS resolution. Default: target-dc')
 	parser.add_argument('-g', dest='enum_groups', default=False, action='store_true', help='Enumerate all Domain Group RIDs')
 	parser.add_argument('-u', dest='enum_users', default=False, action='store_true', help='Enumerate all Domain User RIDs, name and descriptions')
 	parser.add_argument('-p', dest='enum_pass_policy', default=False, action='store_true', help='Enumerate domain password policy')
