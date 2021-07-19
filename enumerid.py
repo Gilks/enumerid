@@ -249,8 +249,10 @@ class SAMRGroupDump:
 							rid = user['Rid']
 						except AttributeError:
 							pass
-
-						data = '{0},{1},{2},{3}'.format(rid, username, full_name, admin_comment)
+						try:
+							data = '{0},{1},{2},{3}'.format(rid, username, full_name, admin_comment)
+						except UnboundLocalError:
+							continue
 						self.log.info(data)
 						self.data.append(data)
 					continue
