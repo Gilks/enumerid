@@ -1,3 +1,4 @@
+#!/usr/bin/env python2
 # there's nothing like Miami's heat
 # Forget about your boyfriend And meet me at the hotel room
 # I've been to countries and cities I can't pronounce
