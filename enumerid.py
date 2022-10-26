@@ -243,9 +243,9 @@ class SAMRGroupDump:
 					users = resp['Buffer']['UserInformation']['Buffer']
 					for i, user in enumerate(users):
 						try:
-							username = (user['AccountName']).encode('utf8')
-							full_name = (user['FullName']).encode('utf8')
-							admin_comment = (user['AdminComment']).encode('utf8')
+							username = user['AccountName']
+							full_name = user['FullName']
+							admin_comment = user['AdminComment']
 							rid = user['Rid']
 						except AttributeError:
 							pass
