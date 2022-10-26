@@ -316,50 +316,57 @@ class SAMRGroupDump:
 		samr.hSamrCloseHandle(dce, group_request['GroupHandle'])
 
 	def enumerate_users_in_group(self, dce, domain_handle):
-		request = samr.SamrOpenGroup()
-		request['DomainHandle'] = domain_handle
-		request['DesiredAccess'] = samr.MAXIMUM_ALLOWED
-		request['GroupId'] = self.rid
+		self.log.info('[*] Group RID detected. Enumerating all members and any additional groups..\n')
+		# If we find group RIDs within a group, we will append it to this list and enumerate that too.
+		group_rids = list()
+		group_rids.append(self.rid)
 
-		try:
-			resp = dce.request(request)
-		except samr.DCERPCSessionError:
-				raise
+		for group_rid in group_rids:
+			request = samr.SamrOpenGroup()
+			request['DomainHandle'] = domain_handle
+			request['DesiredAccess'] = samr.GENERIC_READ
+			request['GroupId'] = group_rid
 
-		request = samr.SamrGetMembersInGroup()
-		request['GroupHandle'] = resp['GroupHandle']
-		resp = dce.request(request)
-		self.log.info('[*] Group RID detected. Enumerating users/hosts in group..\n')
-
-		try:
-			rids = resp['Members']['Members']
-		except AttributeError:
-			self.log.info('[-] No users in group')
-			return
-
-		mutex = Lock()
-		for rid in rids:
 			try:
-				resp = samr.hSamrOpenUser(dce, domain_handle, samr.MAXIMUM_ALLOWED, rid['Data'])
-				rid_data = samr.hSamrQueryInformationUser2(dce, resp['UserHandle'], samr.USER_INFORMATION_CLASS.UserAllInformation)
-			except samr.DCERPCSessionError as e:
-				# Occasionally an ACCESS_DENIED is rasied even though the user has permissions?
-				# Other times a STATUS_NO_SUCH_USER is raised when a rid apparently doesn't exist, even though it reported back as existing.
-				self.log.debug(e)
-				continue
-			if self.fqdn:
-				rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '') + '.' + self.fqdn
-			else:
-				rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '')
-			samr.hSamrCloseHandle(dce, resp['UserHandle'])
+				resp = dce.request(request)
+			except samr.DCERPCSessionError:
+					raise
 
-			if self.dns_lookup:
-				# Threading because DNS lookups are slow
-				t = Thread(target=self.get_ip, args=(rid_data, mutex,))
-				t.start()
-			else:
-				self.log.info(rid_data)
-				self.data.append(rid_data)
+			request = samr.SamrGetMembersInGroup()
+			request['GroupHandle'] = resp['GroupHandle']
+			resp = dce.request(request)
+
+			try:
+				rids = resp['Members']['Members']
+			except AttributeError:
+				self.log.info('[-] No users in group')
+				return
+
+			mutex = Lock()
+			for rid in rids:
+				try:
+					resp = samr.hSamrOpenUser(dce, domain_handle, samr.MAXIMUM_ALLOWED, rid['Data'])
+					rid_data = samr.hSamrQueryInformationUser2(dce, resp['UserHandle'], samr.USER_INFORMATION_CLASS.UserAllInformation)
+				except samr.DCERPCSessionError as e:
+					# Occasionally an ACCESS_DENIED is rasied even though the user has permissions?
+					# Other times a STATUS_NO_SUCH_USER is raised when a rid apparently doesn't exist, even though it reported back as existing. Maybe a group? Let's try to enumerate it later
+					if 'STATUS_NO_SUCH_USER' in str(e):
+						group_rids.append(rid['Data'])
+					self.log.debug(e)
+					continue
+				if self.fqdn:
+					rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '') + '.' + self.fqdn
+				else:
+					rid_data = rid_data['Buffer']['All']['UserName'].replace('$', '')
+				samr.hSamrCloseHandle(dce, resp['UserHandle'])
+
+				if self.dns_lookup:
+					# Threading because DNS lookups are slow
+					t = Thread(target=self.get_ip, args=(rid_data, mutex,))
+					t.start()
+				else:
+					self.log.info(rid_data)
+					self.data.append(rid_data)
 
 	def enumerate_password_policy(self, dce, domain_handle):
 		# This method is a refactored and cleaned up version of polenum.py. I had a hard time finding the true
