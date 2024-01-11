@@ -105,9 +105,6 @@ class SAMRGroupDump:
 		self.enumerate_users = False
 		self.enumerate_pass_policy = False
 
-		log_handler = RotatingFileHandler('enumerid.log', maxBytes=5000000, backupCount=2)
-		self.log.addHandler(log_handler)
-
 		self.log.info('[*] Connection target: {0}'.format(self.target))
 
 		if not len(nameservers) and self.dns_lookup:
@@ -519,6 +516,7 @@ if __name__ == '__main__':
 	parser.add_argument('-L', dest='loglvl', action='store', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='INFO', help='set the logging level')
 	parser.add_argument('target', action='store', help='[[domain/]username[:password]@]<DC IP>')
 	parser.add_argument('-o', dest='output', help='Output filename')
+	parser.add_argument('-R', dest='rotating_file', default=True, action='store_false', help='Disable loging file')
 	parser.add_argument('-r', dest='rid', default=0, help='Enumerate the specified rid')
 	parser.add_argument('-f', dest='fqdn',action='store', required=False, help='Provide the fully qualified domain')
 	parser.add_argument('-d', dest='dns_lookup', default=False, action='store_true', help='Perform DNS lookup')
@@ -531,11 +529,18 @@ if __name__ == '__main__':
 
 	options = parser.parse_args()
 	impacket_compatibility(options)
-	logging.getLogger(logging.basicConfig(level=getattr(logging, options.loglvl), format=''))
+	log = logging.getLogger(logging.basicConfig(level=getattr(logging, options.loglvl), format=''))
+
+	if options.rotating_file:
+		log_handler = RotatingFileHandler('enumerid.log', maxBytes=5000000, backupCount=2)
+		log.addHandler(log_handler)
 
 	if options.rid == 0 and not options.enum_groups and not options.enum_users and not options.string_name and not options.enum_pass_policy:
-		print('[-] You must specify a RID (-r) or enumerate all domain groups (-g) or enumerate all domain users (-u) or string name (-s) or enumerate password policy (-p)')
+		log.error('[-] You must specify a RID (-r) or enumerate all domain groups (-g) or enumerate all domain users (-u) or string name (-s) or enumerate password policy (-p)')
 		sys.exit(os.EX_SOFTWARE)
+
+	log.info('[*] Starting EnumerID dump at {0} against {1}'.format(datetime.now(), options.target))
+
 	try:
 		dumper = SAMRGroupDump.from_args(options)
 		dumper.enumerate_groups = options.enum_groups
@@ -546,13 +551,16 @@ if __name__ == '__main__':
 			dumper.get_sid(options.string_name)
 		dumper.dump()
 	except KeyboardInterrupt:
-		print('Exiting...')
+		log.info('Keyboard interrupt. Exiting...')
 
 	except Exception as e:
-		print(e)
+		log.error(e)
 
 	finally:
 		if not options.output:
+			log.info('[*] Completed EnumerID at {0}'.format(datetime.now()))
+			if options.rotating_file:
+				log.info('[*] Log file saved to {0}'.format(log_handler.baseFilename))
 			sys.exit(os.EX_SOFTWARE)
 
 		output_file = open(options.output, 'a+')
@@ -562,4 +570,8 @@ if __name__ == '__main__':
 					data = data.decode()
 				output_file.write(data + '\n')
 			except UnicodeEncodeError:
+				log.error("UnicodeEncodeError when writing data to output file.")
 				continue
+		log.info('[*] Completed EnumerID at {0}'.format(datetime.now()))
+		if options.rotating_file:
+			log.info('[*] Log file saved to {0}'.format(log_handler.baseFilename))
