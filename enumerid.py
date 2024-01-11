@@ -35,6 +35,7 @@ from dns import resolver
 from datetime import datetime
 from threading import Thread, Lock
 from time import strftime, gmtime
+from logging.handlers import RotatingFileHandler
 
 try:
 	from impacket.dcerpc.v5 import transport, samr, lsad, lsat
@@ -103,6 +104,10 @@ class SAMRGroupDump:
 		self.enumerate_groups = False
 		self.enumerate_users = False
 		self.enumerate_pass_policy = False
+
+		log_handler = RotatingFileHandler('enumerid.log', maxBytes=5000000, backupCount=2)
+		self.log.addHandler(log_handler)
+
 		self.log.info('[*] Connection target: {0}'.format(self.target))
 
 		if not len(nameservers) and self.dns_lookup:
