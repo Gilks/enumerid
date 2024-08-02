@@ -21,50 +21,47 @@ Domain password policy enumeration with `-p`
 ![enumerid domain password policy example](example/enumerid_domain_password_policy_example.png "enumerid password policy enumeration example")
 
 ## Requirements
-The impacket library is required in order to run this script.
+This project has been updated to use pipenv
 ```
-pip2 install impacket
+python3 -m pip install pipenv
 ```
-
-If that fails, you can get the library from here.
-```
-https://github.com/CoreSecurity/impacket
-```
+By running `./enumerid` the first time it will install enumerid's pipenv environment.
+Can manually install pipenv environment by using `./install_pipenv.sh`
 
 ## Example Usage:
 Enumerate domain computers with DNS resolution:
 ```
-./enumerid.py domain/username:password@<DC IP> -r 515 -d
+./enumerid domain/username:password@<DC IP> -r 515 -d
 ```
 Enumerate domain controllers without DNS resolution:
 ```
-./enumerid.py domain/username:password@<DC IP> -r 516
+./enumerid domain/username:password@<DC IP> -r 516
 ```
 Enumerate domain admins:
 ```
-./enumerid.py domain/username:password@<DC IP> -r 512
+./enumerid domain/username:password@<DC IP> -r 512
 ```
 Anonymous login vulnerability? Try this:
 ```
-./enumerid.py domain/'':''@<DC IP> -r 515 -d
+./enumerid domain/'':''@<DC IP> -r 515 -d
 ```
 
 Enumerate without the RID (replace with your user/group name):
 ```
-./enumerid.py domain/username:password@<DC IP> -s "Domain Admins"
+./enumerid domain/username:password@<DC IP> -s "Domain Admins"
 ```
 
 Enumerate domain password policy
 ```
-./enumerid.py domain/username:password@<DC IP> -p
+./enumerid domain/username:password@<DC IP> -p
 ```
 
 Enumerate all domain users and descriptions
 ```
-./enumerid.py domain/username:password@<DC IP> -u
+./enumerid domain/username:password@<DC IP> -u
 ```
 
 Enumerate all domain group names and RIDs
 ```
-./enumerid.py domain/username:password@<DC IP> -g
+./enumerid domain/username:password@<DC IP> -g
 ```

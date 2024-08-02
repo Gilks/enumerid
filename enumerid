@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+
+import argparse
+import logging
+import os
+import subprocess
+import sys
+
+from scripts import clean_utilites
+
+def main():
+    """
+    This is a wrapper for enumerid project. This wrapper will check for pipenv environment and launch the Framework.
+    If it fails to find the environment it will attempt to install.
+    """
+    parser = argparse.ArgumentParser(description='Enumerid Framework wrapper', conflict_handler='resolve')
+    env_group = parser.add_argument_group('pip environment wrapper options')
+    env_action = env_group.add_mutually_exclusive_group()
+    env_action.add_argument('--env-install', dest='pipenv_install', default=False, action='store_true', help='install pipenv environment and exit')
+    env_action.add_argument('--env-update', dest='pipenv_update', default=False, action='store_true', help='update pipenv requirements and exit')
+    env_action.add_argument('--env-upgrade', dest='pipenv_upgrade', default=False, action='store_true', help='update pipenv requirements and exit')
+    log_group = parser.add_argument_group('logging options')
+    log_group.add_argument('-L', '--log', dest='loglvl', type=str.upper, choices=('DEBUG', 'INFO', 'WARNING', 'ERROR', 'FATAL'), help='set the logging level')
+    log_group.add_argument('--logger', default='', help='specify the root logger')
+
+    arguments, unknown_args = parser.parse_known_args()
+    sys_argv = sys.argv
+    sys_argv.pop(0)
+    logger = logging.getLogger('Enumerid.wrapper')
+    logger.setLevel(arguments.loglvl if arguments.loglvl else 'WARNING')
+    console_log_handler = logging.StreamHandler()
+    console_log_handler.setLevel(arguments.loglvl if arguments.loglvl else 'WARNING')
+    console_log_handler.setFormatter(logging.Formatter('%(levelname)-8s %(message)s'))
+    logger.addHandler(console_log_handler)
+
+    target_directory = os.path.abspath(os.path.dirname(__file__))
+    os.environ['PIPENV_VENV_IN_PROJECT'] = os.environ.get('PIPENV_VENV_IN_PROJECT', 'True')
+    os.environ['PIPENV_PIPFILE'] = os.environ.get('PIPENV_PIPFILE', os.path.join(target_directory, 'Pipfile'))
+    if clean_utilites.which('pipenv') is None:
+        logger.info("pipenv not found, please install pipenv. 'python3 -m pip install pipenv'")
+
+    pipenv_path = clean_utilites.which('pipenv')
+    logger.debug(f"pipenv path: {pipenv_path}")
+    if not pipenv_path:
+        logger.exception("failed to find pipenv. to install `python3 -m pip install pipenv`")
+        return
+
+    if arguments.pipenv_install:
+        logger.info("installing Enumerid's pipenv environment")
+        pipenv_task(pipenv_path, ['install'])
+        return
+
+    if arguments.pipenv_update:
+        logger.info("updating Enumerid's pipenv environment")
+        pipenv_task(pipenv_path, ['update'])
+        return
+
+    if arguments.pipenv_upgrade:
+        logger.info("upgrading out of date packages")
+        pipenv_task(pipenv_path, ['update', '--outdated'])
+        return
+
+    if not os.path.isdir(os.path.join(target_directory, '.venv')):
+        logger.info("pipenv installation not found, attempting to install")
+        pipenv_task(pipenv_path, ['install'])
+
+    # too pass argparse in the future, current terminal is causing issues when passing args
+    passing_argv = [' ', 'run', os.path.basename(__file__)] + sys_argv
+    #passing_argv = [' ', 'run', os.path.basename(__file__)]
+    os.execve(pipenv_path, passing_argv, os.environ)
+
+def pipenv_task(pipenv_path, task):
+    command = [pipenv_path] + task
+    try:
+        subprocess.call(command)
+    except CalledProcessError:
+        print("Error in pipenv tasks")
+        return
+
+if __name__ == '__main__':
+    sys.exit(main())
