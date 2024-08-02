@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 #
 #  enumerid.py
 #
@@ -29,7 +29,6 @@ import argparse
 import logging
 import os
 import re
-import socket
 import sys
 from dns import resolver
 from datetime import datetime
@@ -476,13 +475,17 @@ class SAMRGroupDump:
 		res = resolver.Resolver()
 		res.nameservers = self.nameservers 
 		try:
-			answers = res.query(hostname)
+			answers = res.resolve(hostname)
 			if len(answers):
 				ip = answers[0].address
 			else:
 				ip = ''
-			rid_info = '{0},{1}'.format(hostname, ip)
-		except Exception:
+			rid_info = f"{hostname}, {ip}"
+		except resolver.LifetimeTimeout:
+			self.log.warning("DNS request timed out, try manually adding a target nameserver with -ns")
+			rid_info = hostname
+		except resolver.NXDOMAIN as error:
+			self.log.warning(f"NXDOMAIN lookup failed, f{error}. Try manually adding FQDN -f")
 			rid_info = hostname
 
 		with mutex:

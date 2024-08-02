@@ -1,0 +1,11 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+dnspython = ">=2.6.1"
+impacket = ">=0.11.0"
+
+[scripts]
+enumerid = "python enumerid.py"
