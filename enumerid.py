@@ -482,10 +482,13 @@ class SAMRGroupDump:
 				ip = ''
 			rid_info = f"{hostname}, {ip}"
 		except resolver.LifetimeTimeout:
-			self.log.warning("DNS request timed out, try manually adding a target nameserver with -ns")
+			self.log.debug("DNS request timed out, try manually adding a target nameserver with -ns")
 			rid_info = hostname
 		except resolver.NXDOMAIN as error:
-			self.log.warning(f"NXDOMAIN lookup failed, f{error}. Try manually adding FQDN -f")
+			self.log.debug(f"NXDOMAIN lookup failed: {error}")
+			rid_info = hostname
+		except resolver.NoNameservers as error:
+			self.log.debug(f"DNS server failed to answer: {error}")
 			rid_info = hostname
 
 		with mutex:
